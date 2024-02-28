@@ -1,4 +1,5 @@
 use reqwest;
+use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::string::FromUtf8Error;
@@ -14,9 +15,10 @@ impl Config {
     }
 
     pub fn default() -> Config {
-        return Config::new(String::from(
+        let default_url = env::var("TAGESWORT_URL").unwrap_or(String::from(
             "https://assets.aphorismen.de/tagesspruch/tageswort.txt",
         ));
+        return Config::new(default_url);
     }
 }
 
