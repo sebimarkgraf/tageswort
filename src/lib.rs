@@ -63,7 +63,6 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
 pub fn request_tageswort(config: &Config) -> Result<String, TageswortError> {
     let body = reqwest::blocking::get(config.url.clone())?.text()?;
     let text = decode(&body)?.into_owned();
-    println!("{}", text);
     return Ok(text);
 }
 

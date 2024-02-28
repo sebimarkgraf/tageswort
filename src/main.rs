@@ -5,7 +5,7 @@ fn main() {
     let config = Config::default();
 
     if let Err(err) = run(config) {
-        println!("Problem running the tageswort: {:#?}", err);
+        eprintln!("Problem running the tageswort: {:#?}", err);
         process::exit(1);
     }
 }
