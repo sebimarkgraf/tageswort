@@ -1,3 +1,10 @@
+//! # tageswort
+//! `tageswort` is a library for fetching the daily word of the day from aphorismen.de.
+//! It provides a simple API to fetch the word of the day and parse it into a struct.
+//! The struct contains the text of the word of the day and a link to the aphorismen.de website.
+//!
+//! The library is built on top of reqwest for fetching the word of the day and urlencoding for decoding the response.
+
 use reqwest;
 use std::env;
 use std::fmt;
@@ -60,6 +67,23 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
     return Ok(tageswort);
 }
 
+/// Fetches the word of the day from aphorismen.de and returns it as a string.
+/// The word of the day is fetched from the url specified in the config.
+///
+/// # Arguments
+/// * `config` - The configuration for fetching the word of the day.
+/// # Returns
+/// * The word of the day as a string.
+/// # Errors
+/// * If the request to fetch the word of the day fails.
+/// * If the response from the request cannot be decoded.
+/// # Example
+/// ```
+/// use tageswort::{Config, request_tageswort};
+/// let config = Config::default();
+/// let tageswort = request_tageswort(&config).unwrap();
+/// assert!(!tageswort.is_empty());
+/// ```
 pub fn request_tageswort(config: &Config) -> Result<String, TageswortError> {
     let body = reqwest::blocking::get(config.url.clone())?.text()?;
     let text = decode(&body)?.into_owned();
