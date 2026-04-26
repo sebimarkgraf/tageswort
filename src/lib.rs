@@ -34,6 +34,7 @@ impl Default for Config {
 pub enum TageswortError {
     Reqwest(reqwest::Error),
     UrlEncoding(FromUtf8Error),
+    ParseError,
 }
 
 impl From<reqwest::Error> for TageswortError {
@@ -66,10 +67,30 @@ pub fn decode_tageswort_response(body: &str) -> Result<String, TageswortError> {
 }
 
 pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, TageswortError> {
-    let lines: Vec<&str> = text.split("\n").collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .skip_while(|line| line.trim().is_empty())
+        .collect();
+
+    let trailing_blank_lines = lines
+        .iter()
+        .rev()
+        .take_while(|line| line.trim().is_empty())
+        .count();
+    let lines = &lines[..lines.len().saturating_sub(trailing_blank_lines)];
+
+    if lines.len() < 3 {
+        return Err(TageswortError::ParseError);
+    }
+
+    let link_id = lines[lines.len() - 2];
+    if link_id.trim().is_empty() || lines[..lines.len() - 2].is_empty() {
+        return Err(TageswortError::ParseError);
+    }
+
     let tageswort = Tageswort {
-        text: lines[0..lines.len() - 3].join("\n"),
-        link: String::from("https://aphorismen.de/zitat/") + lines[lines.len() - 3],
+        text: lines[..lines.len() - 2].join("\n"),
+        link: String::from("https://aphorismen.de/zitat/") + link_id,
     };
     Ok(tageswort)
 }
@@ -131,6 +152,16 @@ Lisle de Vaux Matthewman
 "
     }
 
+    fn expected_text() -> &'static str {
+        "Dankbarkeit\nEs ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\nLisle de Vaux Matthewman\n(1867 - 1903), Journalist und Schriftsteller"
+    }
+
+    fn assert_sample_parse(text: String) {
+        let tageswort = parse_tageswort_from_response(text).unwrap();
+        assert_eq!(tageswort.text, expected_text());
+        assert_eq!(tageswort.link, "https://aphorismen.de/zitat/232285");
+    }
+
     #[test]
     fn test_decode_tageswort_response() {
         let encoded = urlencoding::encode(sample_text()).into_owned();
@@ -140,9 +171,46 @@ Lisle de Vaux Matthewman
 
     #[test]
     fn test_parse_tageswort_from_response() {
-        let text = String::from(sample_text());
-        let tageswort = parse_tageswort_from_response(text).unwrap();
-        assert_eq!(tageswort.text, "Dankbarkeit\nEs ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\nLisle de Vaux Matthewman\n(1867 - 1903), Journalist und Schriftsteller");
-        assert_eq!(tageswort.link, "https://aphorismen.de/zitat/232285");
+        assert_sample_parse(String::from(sample_text()));
+    }
+
+    #[test]
+    fn test_parse_tageswort_without_trailing_newline() {
+        assert_sample_parse(sample_text().trim_end_matches('\n').to_string());
+    }
+
+    #[test]
+    fn test_parse_tageswort_with_crlf_line_endings() {
+        assert_sample_parse(sample_text().replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn test_parse_tageswort_ignores_outer_blank_lines() {
+        let text = format!("\n\r\n{}\n\r\n", sample_text());
+        assert_sample_parse(text);
+    }
+
+    #[test]
+    fn test_parse_tageswort_rejects_too_short_payload() {
+        assert!(matches!(
+            parse_tageswort_from_response("Dankbarkeit\n232285".to_string()),
+            Err(TageswortError::ParseError)
+        ));
+    }
+
+    #[test]
+    fn test_parse_tageswort_rejects_missing_link_footer() {
+        let text = "\
+Dankbarkeit
+Es ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.
+Lisle de Vaux Matthewman
+(1867 - 1903), Journalist und Schriftsteller
+
+11669
+";
+        assert!(matches!(
+            parse_tageswort_from_response(text.to_string()),
+            Err(TageswortError::ParseError)
+        ));
     }
 }
