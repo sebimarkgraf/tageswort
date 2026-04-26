@@ -30,7 +30,7 @@ jobs:
         run: nix build .# --print-build-logs
 
       - name: Upload built binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: success()
         with:
           name: tageswort-bin
