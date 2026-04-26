@@ -5,7 +5,6 @@
 //!
 //! The library is built on top of reqwest for fetching the word of the day and urlencoding for decoding the response.
 
-use reqwest;
 use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -20,12 +19,14 @@ impl Config {
     pub fn new(url: String) -> Config {
         Config { url }
     }
+}
 
-    pub fn default() -> Config {
+impl Default for Config {
+    fn default() -> Self {
         let default_url = env::var("TAGESWORT_URL").unwrap_or(String::from(
             "https://assets.aphorismen.de/tagesspruch/tageswort.txt",
         ));
-        return Config::new(default_url);
+        Config::new(default_url)
     }
 }
 
@@ -64,7 +65,7 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
         text: lines[0..lines.len() - 3].join("\n"),
         link: String::from("https://aphorismen.de/zitat/") + lines[lines.len() - 3],
     };
-    return Ok(tageswort);
+    Ok(tageswort)
 }
 
 /// Fetches the word of the day from aphorismen.de and returns it as a string.
@@ -87,7 +88,7 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
 pub fn request_tageswort(config: &Config) -> Result<String, TageswortError> {
     let body = reqwest::blocking::get(config.url.clone())?.text()?;
     let text = decode(&body)?.into_owned();
-    return Ok(text);
+    Ok(text)
 }
 
 #[cfg(test)]
