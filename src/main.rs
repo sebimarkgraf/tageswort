@@ -1,5 +1,5 @@
 use std::process;
-use tageswort::{parse_tageswort_from_response, request_tageswort, Config, TageswortError};
+use tageswort::{get_tageswort, Config, TageswortError};
 
 fn main() {
     let config = Config::default();
@@ -11,8 +11,7 @@ fn main() {
 }
 
 fn run(config: Config) -> Result<(), TageswortError> {
-    let text = request_tageswort(&config)?;
-    let tageswort = parse_tageswort_from_response(text)?;
+    let tageswort = get_tageswort(&config)?;
     println!("{}", tageswort);
     Ok(())
 }
