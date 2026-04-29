@@ -5,9 +5,12 @@
 //!
 //! The library is built on top of reqwest for fetching the word of the day and urlencoding for decoding the response.
 
+use chrono::{Local, NaiveDate};
 use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 use urlencoding::decode;
 
@@ -59,6 +62,8 @@ impl Display for Tageswort {
         write!(f, "{}", self.text)
     }
 }
+
+const OFFLINE_FALLBACK_QUOTE: &str = "No network today. The quote couldn't make the net work.";
 
 /// Decodes the raw response body returned by aphorismen.de into plain text.
 pub fn decode_tageswort_response(body: &str) -> Result<String, TageswortError> {
@@ -137,9 +142,81 @@ pub fn request_tageswort(config: &Config) -> Result<String, TageswortError> {
     decode_tageswort_response(&body)
 }
 
+pub fn get_tageswort(config: &Config) -> Result<Tageswort, TageswortError> {
+    get_tageswort_for_date_with_fetch(
+        config,
+        default_cache_root(),
+        Local::now().date_naive(),
+        request_tageswort,
+    )
+}
+
+fn get_tageswort_for_date_with_fetch<F>(
+    config: &Config,
+    cache_root: Option<PathBuf>,
+    today: NaiveDate,
+    fetch_text: F,
+) -> Result<Tageswort, TageswortError>
+where
+    F: FnOnce(&Config) -> Result<String, TageswortError>,
+{
+    match fetch_text(config) {
+        Ok(text) => {
+            let tageswort = parse_tageswort_from_response(text.clone())?;
+            if let Some(cache_root) = cache_root.as_deref() {
+                let _ = write_cached_tageswort(cache_root, today, &text);
+            }
+            Ok(tageswort)
+        }
+        Err(TageswortError::Reqwest(_)) => {
+            if let Some(cache_root) = cache_root.as_deref() {
+                if let Some(tageswort) = read_cached_tageswort(cache_root, today) {
+                    return Ok(tageswort);
+                }
+            }
+            Ok(offline_fallback_tageswort())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn default_cache_root() -> Option<PathBuf> {
+    dirs::cache_dir().map(|path| path.join("tageswort"))
+}
+
+fn cache_file_path(cache_root: &Path, today: NaiveDate) -> PathBuf {
+    cache_root.join(format!("{}.txt", today.format("%Y-%m-%d")))
+}
+
+fn write_cached_tageswort(
+    cache_root: &Path,
+    today: NaiveDate,
+    text: &str,
+) -> Result<(), std::io::Error> {
+    fs::create_dir_all(cache_root)?;
+    fs::write(cache_file_path(cache_root, today), text)
+}
+
+fn read_cached_tageswort(cache_root: &Path, today: NaiveDate) -> Option<Tageswort> {
+    let text = fs::read_to_string(cache_file_path(cache_root, today)).ok()?;
+    parse_cached_tageswort(text)
+}
+
+fn parse_cached_tageswort(text: String) -> Option<Tageswort> {
+    parse_tageswort_from_response(text).ok()
+}
+
+fn offline_fallback_tageswort() -> Tageswort {
+    Tageswort {
+        text: OFFLINE_FALLBACK_QUOTE.to_string(),
+        link: String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_text() -> &'static str {
         "\
@@ -212,5 +289,152 @@ Lisle de Vaux Matthewman
             parse_tageswort_from_response(text.to_string()),
             Err(TageswortError::ParseError)
         ));
+    }
+
+    fn test_cache_root() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            env::temp_dir().join(format!("tageswort-tests-{}-{}", std::process::id(), unique));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_write_and_read_cached_tageswort_for_today() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+
+        write_cached_tageswort(&cache_root, today, sample_text()).unwrap();
+        let tageswort = read_cached_tageswort(&cache_root, today).unwrap();
+        let expected = parse_tageswort_from_response(sample_text().to_string()).unwrap();
+
+        assert_eq!(tageswort.text, expected.text);
+        assert_eq!(tageswort.link, expected.link);
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_read_cached_tageswort_returns_none_when_missing() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+
+        assert!(read_cached_tageswort(&cache_root, today).is_none());
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_read_cached_tageswort_treats_malformed_cache_as_miss() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+
+        write_cached_tageswort(&cache_root, today, "not enough lines").unwrap();
+
+        assert!(read_cached_tageswort(&cache_root, today).is_none());
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_read_cached_tageswort_ignores_yesterday() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+        let yesterday = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+
+        write_cached_tageswort(&cache_root, yesterday, sample_text()).unwrap();
+
+        assert!(read_cached_tageswort(&cache_root, today).is_none());
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_get_tageswort_returns_fetched_quote_and_writes_cache() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+        let config = Config::new("https://example.invalid".to_string());
+
+        let tageswort =
+            get_tageswort_for_date_with_fetch(&config, Some(cache_root.clone()), today, |_| {
+                Ok(sample_text().to_string())
+            })
+            .unwrap();
+        let expected = parse_tageswort_from_response(sample_text().to_string()).unwrap();
+
+        assert_eq!(tageswort.text, expected.text);
+        assert_eq!(tageswort.link, expected.link);
+        assert_eq!(
+            fs::read_to_string(cache_file_path(&cache_root, today)).unwrap(),
+            sample_text()
+        );
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_get_tageswort_returns_cached_quote_when_fetch_fails() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+        let config = Config::new("https://example.invalid".to_string());
+
+        write_cached_tageswort(&cache_root, today, sample_text()).unwrap();
+
+        let tageswort =
+            get_tageswort_for_date_with_fetch(&config, Some(cache_root.clone()), today, |_| {
+                Err(reqwest::blocking::get("http://127.0.0.1:9")
+                    .unwrap_err()
+                    .into())
+            })
+            .unwrap();
+        let expected = parse_tageswort_from_response(sample_text().to_string()).unwrap();
+
+        assert_eq!(tageswort.text, expected.text);
+        assert_eq!(tageswort.link, expected.link);
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_get_tageswort_returns_offline_fallback_when_fetch_fails_without_cache() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+        let config = Config::new("https://example.invalid".to_string());
+
+        let tageswort =
+            get_tageswort_for_date_with_fetch(&config, Some(cache_root.clone()), today, |_| {
+                Err(reqwest::blocking::get("http://127.0.0.1:9")
+                    .unwrap_err()
+                    .into())
+            })
+            .unwrap();
+
+        assert_eq!(tageswort.text, OFFLINE_FALLBACK_QUOTE);
+        assert_eq!(tageswort.link, "");
+
+        fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn test_get_tageswort_returns_fetched_quote_when_cache_write_fails() {
+        let cache_root = test_cache_root();
+        let today = NaiveDate::from_ymd_opt(2026, 4, 28).unwrap();
+        let config = Config::new("https://example.invalid".to_string());
+        let blocking_path = cache_root.join("not-a-directory");
+
+        fs::write(&blocking_path, "blocking").unwrap();
+
+        let tageswort =
+            get_tageswort_for_date_with_fetch(&config, Some(blocking_path), today, |_| {
+                Ok(sample_text().to_string())
+            })
+            .unwrap();
+
+        assert_eq!(tageswort.link, "https://aphorismen.de/zitat/232285");
+
+        fs::remove_dir_all(cache_root).unwrap();
     }
 }
