@@ -59,7 +59,7 @@ pub struct Tageswort {
 
 impl Display for Tageswort {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self.text)
+        write!(f, "{}", format_tageswort_for_display(&self.text))
     }
 }
 
@@ -100,6 +100,53 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
     Ok(tageswort)
 }
 
+fn format_tageswort_for_display(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 4 {
+        return strip_html_break_tags(text);
+    }
+
+    let title = strip_html_break_tags(lines[0]);
+    let quote_lines: Vec<String> = lines[1..lines.len() - 2]
+        .iter()
+        .map(|line| strip_html_break_tags(line))
+        .collect();
+    let attribution_name = strip_html_break_tags(lines[lines.len() - 2]);
+    let attribution_detail = strip_html_break_tags(lines[lines.len() - 1]);
+
+    if title.trim().is_empty() || quote_lines.is_empty() {
+        return strip_html_break_tags(text);
+    }
+
+    let mut output = String::new();
+    output.push_str(&title);
+    output.push_str("\n\n");
+
+    for line in quote_lines {
+        output.push_str("> ");
+        output.push_str(&line);
+        output.push('\n');
+    }
+
+    output.push('\n');
+    output.push_str("— ");
+    output.push_str(&attribution_name);
+
+    if !attribution_detail.trim().is_empty() {
+        output.push('\n');
+        output.push_str("  ");
+        output.push_str(&attribution_detail);
+    }
+
+    output
+}
+
+fn strip_html_break_tags(text: &str) -> String {
+    text.replace("<br />", "")
+        .replace("<br/>", "")
+        .replace("<br>", "")
+}
+
 /// Fetches the word of the day from aphorismen.de and returns it as a string.
 /// The word of the day is fetched from the url specified in the config.
 ///
@@ -125,7 +172,7 @@ pub fn parse_tageswort_from_response(text: String) -> Result<Tageswort, Tageswor
 /// let text = decode_tageswort_response(raw_body).unwrap();
 /// let tageswort = parse_tageswort_from_response(text).unwrap();
 ///
-/// assert_eq!(tageswort.to_string(), "Dankbarkeit\nEs ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\nLisle de Vaux Matthewman\n(1867 - 1903), Journalist und Schriftsteller");
+/// assert_eq!(tageswort.to_string(), "Dankbarkeit\n\n> Es ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\n\n— Lisle de Vaux Matthewman\n  (1867 - 1903), Journalist und Schriftsteller");
 /// assert_eq!(tageswort.link, "https://aphorismen.de/zitat/232285");
 /// ```
 ///
@@ -233,6 +280,10 @@ Lisle de Vaux Matthewman
         "Dankbarkeit\nEs ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\nLisle de Vaux Matthewman\n(1867 - 1903), Journalist und Schriftsteller"
     }
 
+    fn expected_display_text() -> &'static str {
+        "Dankbarkeit\n\n> Es ist schwer einzusehen, warum wir überschwänglich dankbar sein sollen für etwas, das wir nicht wollen, solange uns das, was wir wollen, vorenthalten wird.\n\n— Lisle de Vaux Matthewman\n  (1867 - 1903), Journalist und Schriftsteller"
+    }
+
     fn assert_sample_parse(text: String) {
         let tageswort = parse_tageswort_from_response(text).unwrap();
         assert_eq!(tageswort.text, expected_text());
@@ -289,6 +340,32 @@ Lisle de Vaux Matthewman
             parse_tageswort_from_response(text.to_string()),
             Err(TageswortError::ParseError)
         ));
+    }
+
+    #[test]
+    fn test_display_formats_title_quote_and_attribution() {
+        let tageswort = parse_tageswort_from_response(sample_text().to_string()).unwrap();
+
+        assert_eq!(tageswort.to_string(), expected_display_text());
+    }
+
+    #[test]
+    fn test_display_strips_html_break_variants() {
+        let tageswort = Tageswort {
+            text: "\
+Leben
+Hinweis:<br />
+Zeile zwei<br/> und drei<br>
+© KarlHeinz Karius
+(*1935), Urheber, Mensch und Werbeberater"
+                .to_string(),
+            link: "https://aphorismen.de/zitat/213695".to_string(),
+        };
+
+        assert_eq!(
+            tageswort.to_string(),
+            "Leben\n\n> Hinweis:\n> Zeile zwei und drei\n\n— © KarlHeinz Karius\n  (*1935), Urheber, Mensch und Werbeberater"
+        );
     }
 
     fn test_cache_root() -> PathBuf {
